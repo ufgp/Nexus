@@ -1,0 +1,1360 @@
+local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/bloodball/-back-ups-for-libs/main/Splix"))()
+
+local window = library:new({textsize = 13.5, font = Enum.Font.RobotoMono, name = "Nexus.fun", color = Color3.fromRGB(26, 35, 92)})
+
+local mainTab = window:page({name = "Main"})
+local camSection = mainTab:section({name = "Camera Lock", side = "left", size = 350})
+local killAuraSection = mainTab:section({name = "Kill Aura", side = "left", size = 350})
+local speedSection = mainTab:section({name = "Walkspeed Control", side = "right", size = 350})
+local flightSection = mainTab:section({name = "Flight Control", side = "right", size = 350})
+
+local miscTab = window:page({name = "Misc"})
+local miscSection = miscTab:section({name = "Extras", side = "left", size = 710})
+local desyncSection = miscTab:section({name = "Desync", side = "right", size = 250})    
+local playerSection = miscTab:section({name = "Players", side = "right", size = 450})
+
+local camLockEnabled = false
+local camLockKey = Enum.KeyCode.Z
+local checkKO = false
+local stompTarget = false
+local selectedHitPart = "HumanoidRootPart"
+local camera = game.Workspace.CurrentCamera
+local userInputService = game:GetService("UserInputService")
+local players = game:GetService("Players")
+local localPlayer = players.LocalPlayer
+local mouse = localPlayer:GetMouse()
+local lockedTarget = nil
+
+-- Walkspeed Variables
+local speedToggleEnabled = false
+local speedActive = false
+local speedKey = Enum.KeyCode.X
+local speedMultiplier = 1
+local runService = game:GetService("RunService")
+
+-- Flight Variables
+local flightToggleEnabled = false
+local flightActive = false
+local flightKey = Enum.KeyCode.C
+local flightSpeed = 2000
+local flightHeight = 50
+
+-- Character references
+local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+
+-- Kill Aura Variables
+local autoShootEnabled = false
+local auraRange = 50
+
+-- Define local variables
+local checkKO = false  -- Tracks if K.O. Check toggle is enabled
+local stompTarget = false  -- Tracks if Stomp Target toggle is enabled
+
+-- Orbit Variables
+local orbitRadius = 5  -- Default orbit radius
+local orbitHeight = 5  -- Default orbit height
+local orbitSpeed = 1  -- Speed of the orbit (rotation per frame)
+local orbiting = false  -- Whether the player is currently orbiting
+local target = nil  -- The target to orbit around
+local orbitKey = Enum.KeyCode.T  -- Default keybind for orbit
+
+-- K.O. Check function: checks if the player has the K.O. effect
+local function isKO(player)
+    local char = player.Character
+    if char and char:FindFirstChild("BodyEffects") and char.BodyEffects:FindFirstChild("K.O") then
+        return char.BodyEffects["K.O"].Value
+    end
+    return false
+end
+
+-- Function to handle K.O. Check toggle state
+local function toggleKOCheck(value)
+    checkKO = value
+end
+
+-- Function to handle Stomp Target toggle state
+local function toggleStompTarget(value)
+    stompTarget = value
+end
+
+-- Function to get the nearest valid player to the cursor
+local function getNearestValidPlayerToCursor()
+    local nearestPlayer = nil
+    local shortestDistance = math.huge
+
+    for _, player in pairs(players:GetPlayers()) do
+        if player ~= localPlayer and player.Character and player.Character:FindFirstChild(selectedHitPart) then
+            -- Only check K.O. if toggle is enabled
+            if checkKO and isKO(player) then
+                continue  -- Skip this player if K.O. is enabled
+            end
+
+            local part = player.Character[selectedHitPart]
+            local screenPoint, onScreen = camera:WorldToScreenPoint(part.Position)
+
+            if onScreen then
+                local distance = (Vector2.new(mouse.X, mouse.Y) - Vector2.new(screenPoint.X, screenPoint.Y)).Magnitude
+                if distance < shortestDistance then
+                    shortestDistance = distance
+                    nearestPlayer = part
+                end
+            end
+        end
+    end
+
+    return nearestPlayer
+end
+
+local highlight = nil
+
+-- Function to update the target highlight
+local function updateTargetHighlight(targetCharacter)
+    if highlight then
+        highlight:Destroy()
+    end
+
+    if targetCharacter then
+        highlight = Instance.new("Highlight")
+        highlight.Parent = targetCharacter
+        highlight.FillTransparency = 1
+        highlight.OutlineTransparency = 0
+        highlight.OutlineColor = Color3.fromRGB(26, 35, 92)
+    end
+end
+
+-- Orbit Logic
+local function startOrbit()
+    if not lockedTarget then
+        return  -- Only start orbiting if there's a valid target selected
+    end
+
+    orbiting = true
+    local angle = 0
+
+    -- Set the target to orbit around
+    target = lockedTarget
+
+    -- Make sure the target exists and has a humanoid root part
+    if not target or not target.Parent or not target.Parent:FindFirstChild("HumanoidRootPart") then
+        orbiting = false
+        return
+    end
+
+    -- Start orbiting around the target
+    while orbiting do
+        -- Stop orbiting if lockedTarget is nil at any point
+        if not lockedTarget or not lockedTarget.Parent or not lockedTarget.Parent:FindFirstChild("HumanoidRootPart") then
+            orbiting = false
+            return
+        end
+
+        local targetPosition = lockedTarget.Parent.HumanoidRootPart.Position
+        local offset = Vector3.new(
+            math.cos(angle) * orbitRadius,  -- X position based on the radius and angle
+            orbitHeight,  -- Height position from the target
+            math.sin(angle) * orbitRadius   -- Z position based on the radius and angle
+        )
+
+        -- Set the player's position relative to the target (orbiting effect)
+        localPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(targetPosition + offset)
+
+        -- Increment the angle for the next frame
+        angle = angle + orbitSpeed
+
+        -- Wait a short time to create smooth movement
+        task.wait(0.03)  -- Adjust the wait time for smoother or quicker orbit
+    end
+end
+
+-- Stop the orbiting
+local function stopOrbit()
+    orbiting = false
+end
+
+-- Function to lock the camera onto a target continuously
+local function updateCamLockContinuously()
+    while true do
+        -- Always check if lockedTarget exists
+        if lockedTarget and lockedTarget.Parent then
+            -- Continuously update camera lock position
+            camera.CFrame = CFrame.new(camera.CFrame.Position, lockedTarget.Position)
+            updateTargetHighlight(lockedTarget.Parent)
+        else
+            -- Exit the loop if there's no valid target
+            break
+        end
+        task.wait()  -- Continually update each frame
+    end
+end
+
+-- Function to toggle camera lock based on player proximity
+local function toggleCamLock()
+    if camLockEnabled then
+        camLockEnabled = false
+        lockedTarget = nil
+        if highlight then
+            highlight:Destroy()
+            highlight = nil
+        end
+    else
+        lockedTarget = getNearestValidPlayerToCursor()
+        if lockedTarget and lockedTarget.Parent then
+            local targetPlayer = players:GetPlayerFromCharacter(lockedTarget.Parent)
+            if targetPlayer then
+                -- Prevent locking onto K.O.'d player if toggle is enabled
+                if checkKO and isKO(targetPlayer) then
+                    return
+                end
+            end
+            camLockEnabled = true
+            task.spawn(updateCamLockContinuously)  -- Ensure continuous camera lock update
+        end
+    end
+end
+
+-- Function to check K.O. status of the target
+local function checkKOStatus(character)
+    if character and character:FindFirstChild("BodyEffects") then
+        local bodyEffects = character.BodyEffects
+        return bodyEffects:FindFirstChild("K.O") and bodyEffects["K.O"].Value == true
+    end
+    return false
+end
+
+-- Function to instantly teleport above the target
+local function teleportToTarget()
+    if lockedTarget and lockedTarget.Parent and lockedTarget.Parent:FindFirstChild("UpperTorso") then
+        local targetPosition = lockedTarget.Parent.UpperTorso.Position + Vector3.new(0, 2, 0)
+        if localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            localPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(targetPosition)
+        end
+    end
+end
+
+-- Function to start stomping instantly when K.O. is detected
+local function checkAndStomp()
+    while stompTarget do
+        if lockedTarget and lockedTarget.Parent then
+            -- Monitor K.O. status and stomp as soon as it becomes true
+            if stompTarget and checkKOStatus(lockedTarget.Parent) then
+                teleportToTarget()
+                game.ReplicatedStorage.MainEvent:FireServer("Stomp")
+                task.wait(0.1)
+            end
+        end
+        task.wait(0.1)
+    end
+end
+
+if stompTarget then
+    task.spawn(checkAndStomp)  -- Ensure the stomp logic runs continuously
+end
+
+-- Continuously check K.O. status of the target when K.O. check is enabled
+local function continuouslyCheckKOStatus()
+    while camLockEnabled and lockedTarget do
+        if lockedTarget and lockedTarget.Parent then
+            local targetPlayer = players:GetPlayerFromCharacter(lockedTarget.Parent)
+            if targetPlayer then
+                -- Only check K.O. status if the toggle is enabled
+                if checkKO and isKO(targetPlayer) then
+                    lockedTarget = nil  -- Clear the target if K.O. check is true
+                    camLockEnabled = false  -- Disable camera lock
+                    if highlight then
+                        highlight:Destroy()
+                        highlight = nil
+                    end
+                end
+            end
+        end
+        task.wait(0.1)  -- Check every 0.1 seconds
+    end
+end
+
+-- If K.O. check is enabled, start checking for the target's K.O. status continuously
+if checkKO then
+    task.spawn(continuouslyCheckKOStatus)
+end
+
+-- Orbit Keybind and Toggle Logic
+local userInputService = game:GetService("UserInputService")
+local keybindActivated = false
+
+userInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        if input.KeyCode == orbitKey then  -- Set this to your desired keybind
+            keybindActivated = not keybindActivated
+            if keybindActivated then
+                startOrbit()  -- Start orbiting only on the valid target
+            else
+                stopOrbit()  -- Stop orbiting
+            end
+        end
+    end
+end)
+
+-- Handling respawn to maintain highlight and orbit functionality
+local function onPlayerRespawn()
+    if lockedTarget and lockedTarget.Parent then
+        updateTargetHighlight(lockedTarget.Parent)
+        if orbiting then
+            startOrbit()  -- Ensure orbit continues if it's enabled
+        end
+        -- Reapply camera lock constantly to ensure it updates
+        if camLockEnabled then
+            task.spawn(updateCamLockContinuously)  -- Reapply camera lock after respawn
+        end
+    end
+end
+
+local playerAddedConnection
+playerAddedConnection = players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function()
+        onPlayerRespawn()
+    end)
+end)
+
+
+-- UI Elements
+camSection:dropdown({
+    name = "Target Part",
+    def = "HumanoidRootPart",
+    max = 2,
+    options = {"HumanoidRootPart", "Head"},
+    callback = function(value)
+        selectedHitPart = value
+    end
+})
+
+camSection:toggle({name = "Enable K.O. Check", def = false, callback = function(value)
+    checkKO = value
+end})
+
+camSection:toggle({name = "Enable Stomp Target", def = false, callback = function(value)
+    stompTarget = value
+    if stompTarget then
+        task.spawn(checkAndStomp)  -- Start checking and stomping when enabled
+    end
+end})
+
+camSection:keybind({name = "Camlock Keybind", def = Enum.KeyCode.Z, callback = function(key)
+    camLockKey = key
+end})
+
+-- Sliders to adjust Orbit Radius, Height, and Speed
+camSection:slider({
+name = "Orbit Radius",
+def = 5,
+max = 10,
+min = 1,
+rounding = true,
+callback = function(value)
+orbitRadius = value
+end
+})
+
+camSection:slider({
+name = "Orbit Height",
+def = 5,
+max = 15,
+min = 0,
+rounding = true,
+callback = function(value)
+orbitHeight = value
+end
+})
+
+-- Orbit Speed Slider
+camSection:slider({
+name = "Orbit Speed",
+def = 1,
+max = 10,
+min = 0.1,
+rounding = true,
+callback = function(value)
+orbitSpeed = value
+end
+})
+
+
+-- Rebindable Keybind for Orbiting
+camSection:keybind({
+name = "Orbit Keybind",
+def = Enum.KeyCode.T,
+callback = function(key)
+orbitKey = key
+end
+})
+
+speedSection:toggle({name = "Enable Walkspeed", def = false, callback = function(value)
+    speedToggleEnabled = value
+    if not speedToggleEnabled then
+        speedActive = false
+        humanoid.WalkSpeed = 16
+    end
+end})
+
+speedSection:slider({name = "Walkspeed Multiplier", def = 3, max = 10, min = 1, rounding = true, callback = function(value)
+    speedMultiplier = value
+end})
+
+speedSection:keybind({name = "Walkspeed Keybind", def = Enum.KeyCode.X, callback = function(key)
+    speedKey = key
+end})
+
+flightSection:toggle({name = "Enable Flight", def = false, callback = function(value)
+    flightToggleEnabled = value
+    if not flightToggleEnabled then
+        flightActive = false
+    end
+end})
+
+flightSection:slider({name = "Flight Speed", def = 1500, max = 3000, min = 50, rounding = true, callback = function(value)
+    flightSpeed = value
+end})
+
+flightSection:keybind({name = "Flight Keybind", def = Enum.KeyCode.C, callback = function(key)
+    flightKey = key
+end})
+
+local function updateFlightMovement()
+    if not flightActive then return end
+
+    local moveDirection = Vector3.zero
+    local cameraCFrame = workspace.CurrentCamera.CFrame
+
+    if userInputService:IsKeyDown(Enum.KeyCode.W) then
+        moveDirection = moveDirection + cameraCFrame.LookVector
+    end
+    if userInputService:IsKeyDown(Enum.KeyCode.S) then
+        moveDirection = moveDirection - cameraCFrame.LookVector
+    end
+    if userInputService:IsKeyDown(Enum.KeyCode.A) then
+        moveDirection = moveDirection - cameraCFrame.RightVector
+    end
+    if userInputService:IsKeyDown(Enum.KeyCode.D) then
+        moveDirection = moveDirection + cameraCFrame.RightVector
+    end
+    if userInputService:IsKeyDown(Enum.KeyCode.Space) then
+        moveDirection = moveDirection + Vector3.new(0, 1, 0)
+    end
+    if userInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+        moveDirection = moveDirection - Vector3.new(0, 1, 0)
+    end
+
+    if moveDirection.Magnitude > 0 then
+        moveDirection = moveDirection.Unit * flightSpeed
+    end
+    humanoidRootPart.AssemblyLinearVelocity = moveDirection
+end
+
+local function toggleFlight()
+    flightActive = not flightActive
+    if flightActive then
+        humanoid.PlatformStand = true
+        humanoidRootPart.AssemblyLinearVelocity = Vector3.zero
+    else
+        humanoid.PlatformStand = false
+        humanoidRootPart.AssemblyLinearVelocity = Vector3.zero
+    end
+end
+
+local function setupCharacter()
+    character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
+    humanoid = character:WaitForChild("Humanoid")
+    humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+
+    -- Restore Walkspeed if enabled
+    if speedToggleEnabled and speedActive then
+        humanoid.WalkSpeed = speedMultiplier * 16
+    end
+
+    -- Restore Flight if enabled
+    if flightToggleEnabled then
+        flightActive = true -- Ensure flight is active if it was enabled before respawn
+        toggleFlight()
+    end
+end
+
+-- Ensure flight state is preserved across respawns
+localPlayer.CharacterAdded:Connect(setupCharacter)
+
+userInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+
+    if input.KeyCode == speedKey and speedToggleEnabled then
+        speedActive = not speedActive
+        humanoid.WalkSpeed = speedActive and (speedMultiplier * 16) or 16
+    elseif input.KeyCode == flightKey and flightToggleEnabled then
+        toggleFlight()
+    elseif input.KeyCode == camLockKey then
+        toggleCamLock()
+    end
+end)
+
+runService.RenderStepped:Connect(updateFlightMovement)
+
+
+runService.RenderStepped:Connect(function()
+    if not speedToggleEnabled or not speedActive then
+        humanoid.WalkSpeed = 16
+        return
+    end
+
+    local moveDirection = Vector3.zero
+    local cameraCFrame = camera.CFrame
+
+    if userInputService:IsKeyDown(Enum.KeyCode.W) then
+        moveDirection = moveDirection + Vector3.new(cameraCFrame.LookVector.X, 0, cameraCFrame.LookVector.Z)
+    end
+    if userInputService:IsKeyDown(Enum.KeyCode.S) then
+        moveDirection = moveDirection - Vector3.new(cameraCFrame.LookVector.X, 0, cameraCFrame.LookVector.Z)
+    end
+    if userInputService:IsKeyDown(Enum.KeyCode.A) then
+        moveDirection = moveDirection - Vector3.new(cameraCFrame.RightVector.X, 0, cameraCFrame.RightVector.Z)
+    end
+    if userInputService:IsKeyDown(Enum.KeyCode.D) then
+        moveDirection = moveDirection + Vector3.new(cameraCFrame.RightVector.X, 0, cameraCFrame.RightVector.Z)
+    end
+
+    if moveDirection.Magnitude > 0 then
+        moveDirection = moveDirection.Unit * speedMultiplier
+        humanoidRootPart.CFrame = humanoidRootPart.CFrame + moveDirection
+    end
+end)
+
+-- Declare global variables to hold the necessary character references
+local localPlayer = game.Players.LocalPlayer
+local character
+local humanoid
+local humanoidRootPart
+
+-- Kill Aura Variables
+local autoShootEnabled = false
+local auraRange = 50
+local checkKOD = true -- Assuming this is a global variable that controls whether KO check is enabled.
+local targetMethod = "Distance" -- Default targeting method (can be set via dropdown)
+
+-- Whitelist Table
+local Whitelist = {}
+
+-- Update Character function
+local function updateCharacter()
+    -- Ensure the character reference is updated on respawn
+    character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
+    humanoid = character:WaitForChild("Humanoid")
+    humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+
+    -- If speed toggle is enabled, ensure speed is set
+    if speedToggleEnabled and speedActive then
+        humanoid.WalkSpeed = 16
+    end
+end
+
+-- Listen for the respawn event to ensure the character reference is updated
+localPlayer.CharacterAdded:Connect(updateCharacter)
+
+-- K.O. check function
+local function isKO(player)
+    local char = player.Character
+    if char and char:FindFirstChild("BodyEffects") and char.BodyEffects:FindFirstChild("K.O") then
+        return char.BodyEffects["K.O"].Value
+    end
+    return false
+end
+
+-- Function to get the closest player based on distance
+local function getClosestPlayer()
+    local closestPlayer = nil
+    local shortestDistance = math.huge
+
+    for _, player in pairs(game.Players:GetPlayers()) do
+        if player ~= localPlayer and player.Character and player.Character:FindFirstChild("Head") then
+            -- K.O. Check
+            if checkKOD and isKO(player) then
+                continue
+            end
+
+            -- Whitelist Check
+            if Whitelist[player.Name] or Whitelist[player.DisplayName] then
+                continue
+            end
+
+            local head = player.Character.Head
+            local distance = (localPlayer.Character.HumanoidRootPart.Position - head.Position).Magnitude
+
+            if distance < shortestDistance and distance <= auraRange then
+                closestPlayer = player
+                shortestDistance = distance
+            end
+        end
+    end
+    return closestPlayer
+end
+
+-- Function to get the closest player based on the cursor position
+local function getClosestPlayerToCursor()
+    local closestPlayer = nil
+    local shortestDistance = math.huge
+
+    local mouse = localPlayer:GetMouse()
+    local ray = workspace.CurrentCamera:ScreenPointToRay(mouse.X, mouse.Y)
+    local raycastResult = workspace:Raycast(ray.Origin, ray.Direction * auraRange)
+
+    -- If the ray hits something
+    if raycastResult then
+        -- Check the distance to the object hit
+        for _, player in pairs(game.Players:GetPlayers()) do
+            if player ~= localPlayer and player.Character and player.Character:FindFirstChild("Head") then
+                -- K.O. Check
+                if checkKOD and isKO(player) then
+                    continue
+                end
+
+                -- Whitelist Check
+                if Whitelist[player.Name] or Whitelist[player.DisplayName] then
+                    continue
+                end
+
+                local head = player.Character.Head
+                local distance = (raycastResult.Position - head.Position).Magnitude
+
+                if distance < shortestDistance then
+                    closestPlayer = player
+                    shortestDistance = distance
+                end
+            end
+        end
+    end
+    return closestPlayer
+end
+
+-- Automatically shoot at the closest valid player
+local function autoShoot()
+    -- Loop to constantly check for the closest player and shoot
+    while true do
+        if autoShootEnabled then
+            local targetPlayer
+
+            -- Choose the targeting method
+            if targetMethod == "Distance" then
+                targetPlayer = getClosestPlayer()
+            elseif targetMethod == "Cursor" then
+                targetPlayer = getClosestPlayerToCursor()
+            end
+
+            if targetPlayer and targetPlayer.Character then
+                -- K.O. Check before shooting
+                if checkKOD and isKO(targetPlayer) then
+                    continue
+                end
+
+                local targetHead = targetPlayer.Character:FindFirstChild("Head")
+                local Tool = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Tool")
+                if Tool and Tool:FindFirstChild("Handle") and targetHead then
+                    game.ReplicatedStorage.MainEvent:FireServer(
+                        "ShootGun",
+                        Tool.Handle,
+                        Tool.Handle.Position,
+                        targetHead.Position,
+                        targetHead,
+                        Vector3.new(0, 0, 0)
+                    )
+                end
+            end
+        end
+        task.wait(0.1)  -- Wait for a short period before checking again
+    end
+end
+
+-- Ensure auto-shooting starts when the player first joins or respawns
+local function startAutoShoot()
+    -- This ensures that the autoShoot function starts once the local player and character are ready.
+    updateCharacter()  -- Initialize the character on startup
+    task.spawn(autoShoot)  -- Start auto-shooting in a separate task
+end
+
+-- Start the auto-shoot when the player first joins or respawns
+localPlayer.CharacterAdded:Connect(startAutoShoot)
+
+-- Initial call to start auto-shoot when the script first runs
+if localPlayer.Character then
+    startAutoShoot()
+end
+
+-- Chat command to add users to the whitelist
+game.Players.LocalPlayer.Chatted:Connect(function(message)
+    local command, username = message:match("^(;wl)%s*(.*)$")
+    if command and username then
+        -- Search for a player by partial username/display name
+        for _, player in pairs(game.Players:GetPlayers()) do
+            if player.Name:lower():find(username:lower()) or player.DisplayName:lower():find(username:lower()) then
+                -- Add to whitelist
+                Whitelist[player.Name] = true
+                Whitelist[player.DisplayName] = true
+                print(player.Name .. " has been added to the whitelist.")
+            end
+        end
+    end
+end)
+
+-- UI Elements for Kill Aura
+killAuraSection:slider({
+    name = "Kill Aura Range",
+    def = 500,
+    max = 3000,
+    min = 5,
+    rounding = true,
+    callback = function(value)
+        auraRange = value
+    end
+})
+
+killAuraSection:toggle({
+    name = "Enable Kill Aura",
+    def = false,
+    callback = function(value)
+        autoShootEnabled = value
+    end
+})
+
+killAuraSection:toggle({
+    name = "Enable K.O. Check",
+    def = false,
+    callback = function(value)
+        checkKOD = value
+    end
+})
+
+-- Dropdown to select Targeting Method
+killAuraSection:dropdown({
+    name = "Targeting Method",
+    def = "Distance", 
+    max = 2,
+    options = {"Distance", "Cursor"}, 
+    callback = function(value)
+        targetMethod = value
+    end
+})
+
+miscSection:toggle({name = "Enable Auto Reload", def = false, callback = function(value)
+    autoReloadEnabled = value
+    if autoReloadEnabled then
+        _G.ImUrDaddy = true -- Enable Auto Reload functionality
+        -- Auto Reload Loop
+        spawn(function()
+            while _G.ImUrDaddy == true and game:GetService("RunService").Heartbeat:Wait() do
+                if game:GetService("Players").LocalPlayer.Character:FindFirstChildWhichIsA("Tool") then
+                    if game:GetService("Players").LocalPlayer.Character:FindFirstChildWhichIsA("Tool"):FindFirstChild("Ammo") then
+                        if game:GetService("Players").LocalPlayer.Character:FindFirstChildWhichIsA("Tool"):FindFirstChild("Ammo").Value <= 0 then
+                            game:GetService("ReplicatedStorage").MainEvent:FireServer("Reload", game:GetService("Players").LocalPlayer.Character:FindFirstChildWhichIsA("Tool")) 
+                            wait(1)
+                        end
+                    end
+                end
+            end
+        end)
+    else
+        _G.ImUrDaddy = false -- Disable Auto Reload functionality
+    end
+end})
+
+-- Misc Tab - Anti Stomp Toggle
+miscSection:toggle({
+name = "Enable Anti-Stomp",
+def = false,
+callback = function(value)
+antiStompEnabled = value
+if antiStompEnabled then
+    _G.AntiStompActive = true  -- Enable Anti-Stomp functionality
+    -- Anti-Stomp Loop
+    spawn(function()
+        while _G.AntiStompActive == true and game:GetService("RunService").Heartbeat:Wait() do
+            local player = game.Players.LocalPlayer
+            if player.Character then
+                local bodyEffects = player.Character:FindFirstChild("BodyEffects")
+                if bodyEffects and bodyEffects:FindFirstChild("K.O") then
+                    if bodyEffects["K.O"].Value == true then
+                        local humanoid = player.Character:FindFirstChild("Humanoid")
+                        if humanoid then
+                            humanoid.Health = 0  -- Trigger reset if K.O. is true
+                        end
+                    end
+                end
+            end
+        end
+    end)
+else
+    _G.AntiStompActive = false  -- Disable Anti-Stomp functionality
+end
+end
+})
+
+
+-- Misc Tab - Auto Stomp Toggle
+miscSection:toggle({
+name = "Enable Auto Stomp",
+def = false,
+callback = function(value)
+    autoStompEnabled = value
+    if autoStompEnabled then
+        _G.AutoStompActive = true  -- Enable Auto Stomp functionality
+        -- Auto Stomp Loop
+        spawn(function()
+            while _G.AutoStompActive == true and game:GetService("RunService").Heartbeat:Wait() do
+                local players = game.Players
+                -- Check all players for knocked-out status
+                for _, player in pairs(players:GetPlayers()) do
+                    if player.Character and player.Character:FindFirstChild("BodyEffects") then
+                        local koStatus = player.Character.BodyEffects:FindFirstChild("K.O")
+                        if koStatus and koStatus.Value == true then
+                            -- Fire the stomp event for the knocked player
+                            game.ReplicatedStorage.MainEvent:FireServer("Stomp")
+                        end
+                    end
+                end
+            end
+        end)
+    else
+        _G.AutoStompActive = false  -- Disable Auto Stomp functionality
+    end
+end
+})
+
+-- Misc Tab - Noclip Toggle
+miscSection:toggle({
+name = "Enable Noclip",
+def = false,
+callback = function(value)
+noclipEnabled = value
+if noclipEnabled then
+    _G.NoclipActive = true  -- Enable Noclip functionality
+
+    -- Noclip Loop
+    spawn(function()
+        while _G.NoclipActive == true and game:GetService("RunService").Heartbeat:Wait() do
+            if game.Players.LocalPlayer.Character then
+                for _, part in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part.CanCollide = false  -- Disable collision for the parts
+                    end
+                end
+            end
+        end
+    end)
+else
+    _G.NoclipActive = false  -- Disable Noclip functionality
+
+    -- Restore collision when noclip is off
+    if game.Players.LocalPlayer.Character then
+        for _, part in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = true  -- Enable collision for the parts
+            end
+        end
+    end
+end
+end
+})
+
+_G.HeadSize = 1
+_G.Disabled = true
+
+-- Function to update hitboxes
+local function updateHitboxes()
+    game:GetService("RunService").RenderStepped:Connect(function()
+        if _G.Disabled then
+            for _, v in next, game:GetService("Players"):GetPlayers() do
+                if v.Name ~= game:GetService("Players").LocalPlayer.Name then
+                    pcall(function()
+                        v.Character.HumanoidRootPart.Size = Vector3.new(_G.HeadSize, _G.HeadSize, _G.HeadSize)
+                        v.Character.HumanoidRootPart.Transparency = 0.9
+                        v.Character.HumanoidRootPart.BrickColor = BrickColor.new("Really blue")
+                        v.Character.HumanoidRootPart.Material = Enum.Material.Neon
+                        v.Character.HumanoidRootPart.CanCollide = false
+                    end)
+                end
+            end
+        end
+    end)
+end
+
+-- Toggle to enable/disable hitbox expander
+miscSection:toggle({
+    name = "Enable Hitbox Expander",
+    def = false,
+    callback = function(value)
+        _G.Disabled = value
+
+        if value then
+            -- When re-enabling, apply the last used hitbox size
+            for _, v in next, game:GetService("Players"):GetPlayers() do
+                if v.Name ~= game:GetService("Players").LocalPlayer.Name then
+                    pcall(function()
+                        v.Character.HumanoidRootPart.Size = Vector3.new(_G.HeadSize, _G.HeadSize, _G.HeadSize)
+                        v.Character.HumanoidRootPart.Transparency = 0.8
+                        v.Character.HumanoidRootPart.BrickColor = BrickColor.new("Really blue")
+                        v.Character.HumanoidRootPart.Material = Enum.Material.Neon
+                        v.Character.HumanoidRootPart.CanCollide = false
+                    end)
+                end
+            end
+        else
+            -- When disabling, reset hitboxes to normal
+            for _, v in next, game:GetService("Players"):GetPlayers() do
+                if v.Name ~= game:GetService("Players").LocalPlayer.Name then
+                    pcall(function()
+                        v.Character.HumanoidRootPart.Size = Vector3.new(1, 1, 1)
+                        v.Character.HumanoidRootPart.Transparency = 1
+                        v.Character.HumanoidRootPart.BrickColor = BrickColor.new("Really blue")
+                        v.Character.HumanoidRootPart.Material = Enum.Material.Neon
+                        v.Character.HumanoidRootPart.CanCollide = false
+                    end)
+                end
+            end
+        end
+    end
+})
+
+-- Slider to control hitbox size (inside miscSection, max set to 50)
+miscSection:slider({
+    name = "Hitbox Size",
+    def = 1,
+    max = 30,
+    min = 1,
+    rounding = true,
+    callback = function(value)
+        _G.HeadSize = value
+        
+        -- If expander is enabled, apply the new hitbox size immediately
+        if _G.Disabled then
+            for _, v in next, game:GetService("Players"):GetPlayers() do
+                if v.Name ~= game:GetService("Players").LocalPlayer.Name then
+                    pcall(function()
+                        v.Character.HumanoidRootPart.Size = Vector3.new(_G.HeadSize, _G.HeadSize, _G.HeadSize)
+                    end)
+                end
+            end
+        end
+    end
+})
+
+-- Start updating hitboxes
+updateHitboxes()
+
+
+
+-- Function to destroy seats
+local function destroySeats()
+for _, seat in ipairs(workspace:GetDescendants()) do
+    if seat:IsA("Seat") or seat:IsA("VehicleSeat") then
+        seat:Destroy()
+    end
+end
+end
+-- Create the "Destroy Seats" button in miscSection
+local destroySeatsButton = miscSection:button({
+name = "Destroy Seats",
+callback = function()
+    -- Call the destroySeats function when the button is pressed
+    destroySeats()
+
+    -- Optional: Continuously check for new seats and destroy them
+    workspace.DescendantAdded:Connect(function(newDescendant)
+        if newDescendant:IsA("Seat") or newDescendant:IsA("VehicleSeat") then
+            newDescendant:Destroy()
+        end
+    end)
+end
+})
+
+-- Create the "Enable ESP" button in miscSection
+local espButton = miscSection:button({
+name = "Enable ESP",
+callback = function()
+-- ESP settings table
+local esp_settings = {  
+    textsize = 11,
+    colour = {255, 255, 255}  -- Name text stays white
+}
+
+-- Create the necessary GUI elements
+local gui = Instance.new("BillboardGui")
+local esp = Instance.new("TextLabel", gui)  
+
+gui.Name = "Cracked esp"
+gui.ResetOnSpawn = false
+gui.AlwaysOnTop = true
+gui.LightInfluence = 0
+gui.Size = UDim2.new(1.75, 0, 1.75, 0)
+
+esp.BackgroundTransparency = 1
+esp.Text = ""
+esp.Size = UDim2.new(0.0001, 0.00001, 0.0001, 0.00001)
+esp.BorderSizePixel = 4
+esp.Font = Enum.Font.GothamSemibold
+esp.TextSize = esp_settings.textsize
+esp.TextStrokeTransparency = 0.6  
+esp.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)  -- Black outline
+
+-- Enable ESP and start updating ESP for each player
+_G.espActive = true
+game:GetService("RunService").RenderStepped:Connect(function()
+    for _, v in pairs(game:GetService("Players"):GetPlayers()) do
+        if v ~= game.Players.LocalPlayer and v.Character and v.Character:FindFirstChild("Head") then
+            local head = v.Character:WaitForChild("Head")
+            local humanoid = v.Character:FindFirstChildOfClass("Humanoid")
+
+            if humanoid then
+                local health = math.floor(humanoid.Health)  
+                local healthColor = Color3.fromRGB(255, 0, 0)  -- Default red
+
+                -- Adjust HP text colour based on health
+                if health >= 60 then
+                    healthColor = Color3.fromRGB(0, 255, 0)  -- Green (60-100)
+                elseif health >= 30 then
+                    healthColor = Color3.fromRGB(255, 165, 0)  -- Orange (30-59)
+                end
+
+                if not head:FindFirstChild("Cracked esp") then
+                    local clonedGui = gui:Clone()
+                    clonedGui.Parent = head
+                    local clonedEsp = clonedGui:FindFirstChild("TextLabel")
+
+                    -- Set ESP text and formatting
+                    clonedEsp.Text = v.Name .. "\nHP: " .. health
+                    clonedEsp.RichText = true  -- Enable rich text formatting
+                    clonedEsp.TextColor3 = Color3.fromRGB(255, 255, 255)  -- Name stays white
+                    clonedEsp.Text = string.format('<font color="rgb(255,255,255)">%s</font>\n<font color="rgb(%d,%d,%d)">HP: %d</font>',
+                        v.Name, healthColor.R * 255, healthColor.G * 255, healthColor.B * 255, health)
+
+                    clonedGui.Name = "Cracked esp"
+                else
+                    -- Update text and colour dynamically
+                    local clonedEsp = head:FindFirstChild("Cracked esp"):FindFirstChild("TextLabel")
+                    if clonedEsp then
+                        clonedEsp.Text = string.format('<font color="rgb(255,255,255)">%s</font>\n<font color="rgb(%d,%d,%d)">HP: %d</font>',
+                            v.Name, healthColor.R * 255, healthColor.G * 255, healthColor.B * 255, health)
+                    end
+                end
+            end
+        end
+    end
+end)
+end
+})
+
+-- Create the "Enable Chatlog" button in miscSection
+miscSection:button({
+name = "Enable Chatspy",
+callback = function()
+-- Chatlog script
+local Players, SGui = game:GetService("Players"), game:GetService("StarterGui")
+local Client, NColor3, UD, UD2 = Players.LocalPlayer, Color3.new, UDim.new, UDim2.new
+
+local function ChatSpy()
+    local ChatSpyFrame = Client.PlayerGui.Chat.Frame
+    ChatSpyFrame.ChatChannelParentFrame.Visible = true
+    ChatSpyFrame.ChatBarParentFrame.Position = ChatSpyFrame.ChatChannelParentFrame.Position + UD2(UD(), ChatSpyFrame.ChatChannelParentFrame.Size.Y)
+end -- brings back chat for games that remove it
+ChatSpy()
+
+getgenv().ShowHiddenMsg = function(T, C)
+    SGui:SetCore("ChatMakeSystemMessage", {
+        Text = T;
+        Color = C;
+    })
+end
+
+getgenv().Spy = function(Target)
+    Target.Chatted:Connect(function(Msg)
+        if string.find(Msg, "/e ") or string.find(Msg, "/w ") or string.find(Msg, "/whisper ") then
+            ShowHiddenMsg("{SPY}: ".."["..tostring(Target).."]: "..Msg, NColor3(255,255,255)) 
+        end
+    end)
+end
+
+local GP = Players:GetPlayers()
+for i = 1, #GP do
+    local Plr = GP[i]
+    if tostring(Plr) then
+        Spy(Plr)
+    end
+end
+Players.PlayerAdded:Connect(function(P)
+    if tostring(P) then
+        Spy(P)
+    end
+end)
+end
+})
+
+local function antiIdleKick()
+    local bb = game:service'VirtualUser'
+    game:service'Players'.LocalPlayer.Idled:connect(function()
+        bb:CaptureController()
+        bb:ClickButton2(Vector2.new()) -- Prevent idle kick
+        ab.Text = "You went idle and ROBLOX tried to kick you but we reflected it!"
+        wait(2)
+        ab.Text = "Script Re-Enabled"
+    end)
+end
+
+-- Create the Anti Idle Kick button
+if not antiIdleKickButton then
+    antiIdleKickButton = miscSection:button({
+        name = "Anti Idle Kick",
+        callback = antiIdleKick
+    })
+end
+
+
+-- Create the "Rejoin Server" button in miscSection
+miscSection:button({
+name = "Rejoin Server",
+callback = function()
+-- Function to rejoin the server
+local player = game.Players.LocalPlayer
+local teleportService = game:GetService("TeleportService")
+local placeId = game.PlaceId
+teleportService:Teleport(placeId, player)
+end
+})
+
+-- Create the "Hop Server" button in miscSection
+miscSection:button({
+name = "Hop Server",
+callback = function()
+    local placeId = game.PlaceId -- Gets the current game’s Place ID
+    teleportService:Teleport(placeId, player) -- Teleports player to a new server
+end
+})
+
+-- Create the "Force Leave" button in miscSection
+miscSection:button({
+name = "Leave Server",
+callback = function()
+-- Function to make the player leave the game
+local player = game.Players.LocalPlayer
+player:Kick("Nexus made you log.")
+end
+})
+
+
+
+-- Desync Toggle Variables
+local desync_enabled = false
+local desync_keybind = Enum.KeyCode.Tab -- Default key
+local player = game.Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local humanoid = character:WaitForChild("Humanoid")
+local original_cframe
+local userInputService = game:GetService("UserInputService")
+
+-- Variable to store the random range from the slider
+local randomRange = 250
+
+-- Function to toggle desync
+local function toggleDesync()
+desync_enabled = not desync_enabled
+if desync_enabled then
+    -- Enable desync: store original CFrame
+    original_cframe = humanoidRootPart.CFrame
+else
+    -- Disable desync: restore original position
+    humanoidRootPart.CFrame = original_cframe
+end
+end
+
+-- Update desync movement logic
+local function updateDesync()
+if desync_enabled then
+    -- Randomize the CFrame position, but we do not change the physical position
+    local randomX = math.random(-randomRange, randomRange)  -- Use slider value for random range
+    local randomY = math.random(-randomRange, randomRange)
+    local randomZ = math.random(-randomRange, randomRange)
+
+    -- Apply random CFrame offset from original position
+    humanoidRootPart.CFrame = original_cframe * CFrame.new(randomX, randomY, randomZ)
+end
+end
+
+-- Slider for controlling the random range for desync
+local randomSlider = desyncSection:slider({
+name = "Desync Random Range",
+min = 50,
+max = 1000,
+def = randomRange,
+callback = function(value)
+    randomRange = value  -- Update randomRange with the slider value
+end
+})
+
+-- Keybind for toggling desync (rebindable)
+local keybindButton = desyncSection:keybind({
+name = "Desync Keybind",
+default = desync_keybind,
+callback = function(value)
+    desync_keybind = value
+end
+})
+
+-- Input handling to toggle desync with the rebound key
+userInputService.InputBegan:Connect(function(input, isProcessed)
+if isProcessed then return end
+
+if input.KeyCode == desync_keybind then
+    toggleDesync()
+end
+end)
+
+-- Ensure desync functionality is retained after respawn
+player.CharacterAdded:Connect(function(newCharacter)
+character = newCharacter
+humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+humanoid = character:WaitForChild("Humanoid")
+if desync_enabled then
+    original_cframe = humanoidRootPart.CFrame
+end
+end)
+
+-- Update desync every frame (but without messing with other parts of your game)
+game:GetService("RunService").RenderStepped:Connect(function()
+if desync_enabled then
+    updateDesync()
+end
+end)
+
+
+local spectateButton = nil
+local unspectateButton = nil
+local teleportButton = nil
+local playerDropdown = nil
+local currentSpectatingPlayer = nil
+local isSpectating = false  -- Tracks if spectating is active
+
+-- Function to update the player dropdown with the latest player list
+local function updatePlayerDropdown()
+    local playerNames = {"None"} -- Default option
+
+    -- Add all player names to the list, including display names
+    for _, p in ipairs(game.Players:GetPlayers()) do
+        local displayName = p.DisplayName or p.Name -- Use display name if available
+        local playerEntry = p.Name .. " (" .. displayName .. ")" -- Format: Username (DisplayName)
+        table.insert(playerNames, playerEntry)
+    end
+
+    -- If the dropdown exists, update the options
+    if playerDropdown then
+        playerDropdown:UpdateOptions(playerNames)
+    else
+        -- Create the dropdown for the first time
+        playerDropdown = playerSection:dropdown({
+            name = "Select Player",
+            def = "None",
+            max = #playerNames,
+            options = playerNames,
+            callback = function(selectedPlayer)
+                if selectedPlayer == "None" then
+                    currentSpectatingPlayer = nil
+                    isSpectating = false  -- Stop spectating if "None" is selected
+                    return
+                end
+
+                -- Extract the actual username from the dropdown selection
+                local username = selectedPlayer:match("^(%S+) ") -- Extracts first word (actual username)
+
+                -- Get the selected player
+                local targetPlayer = game.Players:FindFirstChild(username)
+                if targetPlayer then
+                    currentSpectatingPlayer = targetPlayer -- Keep track of the selected player
+                    if isSpectating then
+                        spectate() -- Ensure spectating starts immediately if enabled
+                    end
+                end
+            end
+        })
+    end
+end
+
+-- Function to spectate a player constantly
+local function spectate()
+    if currentSpectatingPlayer then
+        isSpectating = true  -- Enable spectating mode
+
+        -- Connect RenderStepped to keep the camera updated
+        game:GetService("RunService").RenderStepped:Connect(function()
+            if isSpectating and currentSpectatingPlayer then
+                local targetCharacter = currentSpectatingPlayer.Character
+                if targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart") then
+                    -- Set the camera to the target player's HumanoidRootPart
+                    game.Workspace.CurrentCamera.CameraSubject = targetCharacter.HumanoidRootPart
+                end
+            end
+        end)
+
+        -- Ensure continued spectating even if the player respawns
+        currentSpectatingPlayer.CharacterAdded:Connect(function(newCharacter)
+            if isSpectating and newCharacter:FindFirstChild("HumanoidRootPart") then
+                game.Workspace.CurrentCamera.CameraSubject = newCharacter.HumanoidRootPart
+            end
+        end)
+    end
+end
+
+-- Function to stop spectating
+local function unspectate()
+    isSpectating = false  -- Disable spectating mode
+    local localPlayer = game.Players.LocalPlayer
+    if game.Workspace.CurrentCamera.CameraSubject ~= localPlayer.Character then
+        if localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            game.Workspace.CurrentCamera.CameraSubject = localPlayer.Character.HumanoidRootPart
+        end
+    end
+end
+
+-- Function to teleport to the selected player
+local function teleport()
+    if currentSpectatingPlayer then
+        local targetCharacter = currentSpectatingPlayer.Character
+        local localPlayer = game.Players.LocalPlayer
+
+        if targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart") and localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            localPlayer.Character:FindFirstChild("HumanoidRootPart").CFrame = targetCharacter.HumanoidRootPart.CFrame
+        end
+    end
+end
+
+-- Call the function to initialize the dropdown when the script starts
+updatePlayerDropdown()
+
+-- Update the dropdown when players join or leave the game
+game.Players.PlayerAdded:Connect(updatePlayerDropdown)
+game.Players.PlayerRemoving:Connect(updatePlayerDropdown)
+
+-- Create the Spectate button
+if not spectateButton then
+    spectateButton = playerSection:button({
+        name = "Spectate",
+        callback = spectate
+    })
+end
+
+-- Create the Unspectate button
+if not unspectateButton then
+    unspectateButton = playerSection:button({
+        name = "Unspectate",
+        callback = unspectate
+    })
+end
+
+-- Create the Teleport button
+if not teleportButton then
+    teleportButton = playerSection:button({
+        name = "Teleport",
+        callback = teleport
+    })
+end
